@@ -363,9 +363,9 @@ Suggested policy categories:
 | Bridge-specific safe tools | Allow |
 | Workspace reads | Ask |
 | Workspace edits | Ask |
-| Shell commands | Ask |
+| Shell commands | Deny in the first release |
 | Web fetch/search | Ask |
-| Subagents and skills | Ask |
+| Subagents and skills | Deny in the first release |
 | External directories | Deny by default |
 | Credential and environment files | Always deny |
 | OpenCode session sharing | Always deny |
@@ -385,36 +385,18 @@ the owner responds in a separate OpenCode session.
 2. Persist a pending permission review.
 3. Create a dedicated administrator review session.
 4. Insert sanitized request details with `noReply: true`.
-5. Generate a short random review code.
-6. Notify the administrator through the OpenCode TUI.
-7. Wait for an exact approval or rejection message.
-8. Let the review agent invoke the plugin's decision tool.
-9. Verify all authorization conditions inside the tool.
-10. Reply `once` or `reject` to the original OpenCode permission.
+5. Have a hidden review agent invoke only OpenCode's native `question` tool.
+6. Bind that exact question request to the persisted review.
+7. Notify the administrator through the OpenCode TUI.
+8. Offer `Approve once`, `Reject`, and a custom-answer field.
+9. Resolve the permission directly from the native question event, without
+   trusting a model-generated decision.
+10. For custom guidance, reject the pending operation and insert the bounded
+    administrator instruction into the managed remote session.
 11. Mark the review resolved and allow the original request to continue.
 
-Example administrator messages:
-
-```text
-APPROVE ONCE K7M4
-REJECT K7M4
-```
-
-### Decision Tool Enforcement
-
-The custom tool, tentatively named `bluebubbles_permission_decide`, is a
-security boundary. It must verify:
-
-- Its caller session is the exact mapped administrator review session.
-- The permission remains pending.
-- The review code matches.
-- The latest user-authored message exactly matches the expected command.
-- The target permission belongs to a managed remote session.
-- The decision is either one-time approval or rejection.
-- The review has not expired or already been used.
-
-A remote session can see the tool name but must receive an authorization error
-if it attempts to call it. The tool must never expose an `always` decision.
+The broker accepts a response only from the exact bound question in the exact
+administrator review session. It never exposes an `always` decision.
 
 OpenCode's `always` permission can create in-memory approval rules that affect
 later requests and potentially other sessions in the same instance. It is too
@@ -426,8 +408,9 @@ Permission titles, patterns, commands, paths, and metadata originate from a
 remote request and must be rendered as quoted data, not administrator
 instructions. Length limits and control-character escaping are required.
 
-The review agent should have no shell, file, network, task, or bridge tools
-other than the narrowly gated decision tool.
+The review agent should have no shell, file, network, task, or bridge tools.
+Its only allowed tool is OpenCode's native `question` tool; the plugin consumes
+the resulting event and makes the decision itself.
 
 Unanswered reviews should expire after a configured period and automatically
 reject the original permission so a model request cannot remain blocked
@@ -591,10 +574,17 @@ Conceptual OpenCode configuration:
         "alias": "opencode",
         "sendMethod": "private-api",
         "remoteAgent": "bluebubbles-remote",
+        "model": "openai/gpt-5.4-mini",
+        "sessionDirectory": "~/OpenCode/BlueBubbles",
         "pinExpiryMinutes": 15,
         "pinAttempts": 5,
         "permissionExpiryMinutes": 15,
-        "maxConcurrentSessions": 4
+        "maxConcurrentSessions": 4,
+        "allowedTools": ["plex_restart"],
+        "thinkingReaction": false,
+        "typingIndicator": true,
+        "toolCallMessages": false,
+        "permissionWaitMessage": "Hang on, an administrator needs to approve that."
       }
     ]
   ],
@@ -654,7 +644,7 @@ Logs may include:
 Logs must not include:
 
 - BlueBubbles passwords or credential-bearing URLs.
-- PINs or review codes.
+- PINs.
 - Complete phone numbers or email addresses at normal log levels.
 - Message content.
 - OpenCode provider credentials.
@@ -725,9 +715,8 @@ decision.
 - A malicious group message without `@alias` is ignored.
 - A PIN for one sender cannot authorize another group participant.
 - A PIN for one chat cannot authorize another chat.
-- A remote session cannot call an administrator decision tool.
-- A decision tool call from the wrong review session fails.
-- A stale or replayed review code fails.
+- A question response from the wrong review session is ignored.
+- A stale or replayed question response is ignored.
 - Remote command text cannot change the review tool's target permission.
 - Credential and state paths remain denied after one-time tool approvals.
 - Secrets and message content do not appear in logs.
@@ -776,7 +765,7 @@ decision.
 
 - Observe OpenCode permission events.
 - Create isolated administrator review sessions.
-- Add the gated one-time decision tool.
+- Add native administrator review questions with one-time decisions.
 - Add review expiration and automatic rejection.
 
 ### Phase 5: Hardening and Release
